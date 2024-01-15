@@ -1,0 +1,5 @@
+ta_cn
+numba
+bottleneck
+TA-Lib
+nacos-sdk-python
