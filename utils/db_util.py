@@ -1,21 +1,11 @@
 import sqlalchemy
 
 from utils.log_util import get_logger
-
-logger = get_logger(__name__)
+logger = get_logger()
 
 from utils.config_util import get_mysql_config
 
 
-# db
-# create database akshare_data;
-# CREATE USER 'quant'@'localhost' IDENTIFIED BY 'quant';
-# GRANT ALL PRIVILEGES ON akshare_data.* TO 'quant'@'localhost';
-#
-# GRANT ALL PRIVILEGES ON *.* TO 'quant'@'%'
-#     IDENTIFIED BY 'quant'
-#     WITH GRANT OPTION;
-# FLUSH PRIVILEGES;
 class DbUtil:
     def __init__(self):
         self.engine = None

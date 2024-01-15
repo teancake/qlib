@@ -1,8 +1,8 @@
 from sklearn.metrics import mean_squared_error
 import numpy as np
 
-from qlib.log import get_module_logger
-logger = get_module_logger(__name__).logger
+from utils.log_util import get_logger
+logger = get_logger()
 
 from datetime import datetime
 

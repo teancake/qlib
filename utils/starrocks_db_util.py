@@ -1,9 +1,9 @@
 import sqlalchemy
 
-from utils.log_util import get_logger
 from datetime import datetime, timedelta
 
-logger = get_logger(__name__)
+from utils.log_util import get_logger
+logger = get_logger()
 from utils.config_util import get_starrocks_config
 
 
