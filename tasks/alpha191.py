@@ -104,6 +104,7 @@ def prepare_wide_args(src_data_dir, instruments_file, benchmark_file):
         df = pd.read_csv(fn)
         df.set_index("date", inplace=True)
         df["vwap"] = df["amount"] / df["volume"]
+        df["pctChg"] = df["close"] / df.shift(periods=1)["close"]
         open_ = to_wide_df(open_, symbol, df, "open")
         high = to_wide_df(high, symbol, df, "high")
         low = to_wide_df(low, symbol, df, "low")
@@ -190,19 +191,22 @@ def stock_data_to_alpha191(ds, stock_data_dir, qlib_data_dir, instruments_file, 
     alpha_to_csv(alpha_df, src_data_dir=stock_data_dir, dst_data_dir=alpha191_data_dir)
     shutil.copy(benchmark_file, f"{alpha191_data_dir}/{benchmark}.csv")
     logger.info("dump alpha191 data")
-    alpha191_to_bin(alpha191_data_dir, alpha191_qlib_dir)
+    alpha191_instruments_file = f"{alpha191_qlib_dir}/instruments/filter.txt"
+    csv_to_bin(alpha191_data_dir, alpha191_qlib_dir, alpha191_instruments_file)
     logger.info("clean up old data")
     cleanup_old_files(ds, stock_data_dir, qlib_data_dir)
-    alpha191_instruments_file = f"{alpha191_data_dir}/instruments/bao_filter.txt"
     return alpha191_data_dir, alpha191_qlib_dir, alpha191_instruments_file
 
 
-def alpha191_to_bin(alpha191_data_dir, alpha191_qlib_dir):
-    command = f"python scripts/dump_bin.py dump_all --csv_path {alpha191_data_dir} --qlib_dir {alpha191_qlib_dir} --freq day --exclude_fields date,symbol"
-    subprocess.run(command, shell=True)
-
-    command = f"python scripts/data_collector/baostock_1d/collector.py remove_index_instuments --instrments_dir={alpha191_qlib_dir}/instruments"
-    subprocess.run(command, shell=True)
+def csv_to_bin(stock_data_dir, qlib_data_dir, instruments_file):
+    # dump
+    logger.info("dump data into qlib bin format")
+    dump_cmd = f"python scripts/dump_bin.py dump_all --csv_path {stock_data_dir} --qlib_dir {qlib_data_dir} --freq day --exclude_fields date,symbol"
+    subprocess.run(dump_cmd, shell=True)
+    # generate new instrument file
+    logger.info("generate new instrument file")
+    ins_cmd = f"python scripts/dump_bin.py remove_index_instuments --instrments_dir={qlib_data_dir}/instruments --instruments_file={instruments_file}"
+    subprocess.run(ins_cmd, shell=True)
 
 
 def cleanup_old_files(ds, stock_data_dir, qlib_data_dir):

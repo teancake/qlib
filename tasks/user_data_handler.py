@@ -91,7 +91,7 @@ class Alpha191(DataHandlerLP):
         return self.parse_config_to_fields()
 
     def get_label_config(self):
-        return ["Ref($close, -3)/Ref($close, -1) - 1"], ["LABEL0"]
+        return ["Ref($close, -5)/Ref($close, -1) - 1"], ["LABEL0"]
 
     @staticmethod
     def parse_config_to_fields():
@@ -146,7 +146,7 @@ class Alpha360(DataHandlerLP):
         )
 
     def get_label_config(self):
-        return ["Ref($close, -2)/Ref($close, -1) - 1"], ["LABEL0"]
+        return ["Ref($close, -5)/Ref($close, -1) - 1"], ["LABEL0"]
 
     @staticmethod
     def get_feature_config():
@@ -196,7 +196,7 @@ class Alpha360(DataHandlerLP):
 
 class Alpha360vwap(Alpha360):
     def get_label_config(self):
-        return ["Ref($vwap, -2)/Ref($vwap, -1) - 1"], ["LABEL0"]
+        return ["Ref($vwap, -5)/Ref($vwap, -1) - 1"], ["LABEL0"]
 
 
 class Alpha158Mod(DataHandlerLP):
@@ -253,7 +253,7 @@ class Alpha158Mod(DataHandlerLP):
         return self.parse_config_to_fields(conf)
 
     def get_label_config(self):
-        return ["Ref($close, -3)/Ref($close, -1) - 1"], ["LABEL0"]
+        return ["Ref($close, -5)/Ref($close, -1) - 1"], ["LABEL0"]
 
     @staticmethod
     def parse_config_to_fields(config):
@@ -489,4 +489,4 @@ class Alpha158Mod(DataHandlerLP):
 
 class Alpha158vwap(Alpha158Mod):
     def get_label_config(self):
-        return ["Ref($vwap, -2)/Ref($vwap, -1) - 1"], ["LABEL0"]
+        return ["Ref($vwap, -5)/Ref($vwap, -1) - 1"], ["LABEL0"]

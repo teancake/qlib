@@ -1,5 +1,8 @@
 import os, sys
+import traceback
+
 parent_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+print(f"parent dir {parent_dir}, cwd {os.getcwd()}")
 sys.path.append(parent_dir)
 
 import qlib
@@ -31,11 +34,13 @@ from sklearn.metrics import mean_squared_error
 import pickle
 
 
+
 from utils.metric_util import compute_precision_recall, save_prediction_to_db
 
+from utils.starrocks_db_util import StarrocksDbUtil
+from tqdm import tqdm
 
-
-
+from joblib import Parallel, delayed
 
 def record_to_db(ds, model_name, recorder_id):
     recorder = R.get_recorder(recorder_id=recorder_id)
@@ -74,12 +79,65 @@ def record_to_db(ds, model_name, recorder_id):
 def download_bao_data(ds):
     train_start, train_end, valid_start, valid_end, test_start, test_end, pred_start, pred_end = get_dates(ds)
     script_path = 'scripts/get_bao_data.sh'
-    subprocess.call(['sh', script_path, ds, test_end, pred_end])
+    stock_data_dir_prefix = "~/.qlib/stock_data/source/bao_cn_data"
+    qlib_data_dir_prefix = "~/.qlib/qlib_data/bao_cn_data"
+
+    subprocess.call(['sh', script_path, ds, test_end, pred_end, stock_data_dir_prefix, qlib_data_dir_prefix])
     stock_bao_data = f"~/.qlib/stock_data/source/bao_cn_data_{ds}"
     qlib_bao_data = f"~/.qlib/qlib_data/bao_cn_data_{ds}"
-    instruments_file = f"~/.qlib/qlib_data/bao_cn_data_{ds}/instruments/bao_filter.txt"
+    instruments_file = f"~/.qlib/qlib_data/bao_cn_data_{ds}/instruments/filter.txt"
     return stock_bao_data, qlib_bao_data, instruments_file
 
+
+def download_db_data(ds):
+    stock_data_dir_prefix = "~/.qlib/stock_data/source/db_data"
+    qlib_data_dir_prefix = "~/.qlib/qlib_data/db_data"
+    stock_data_dir = os.path.expanduser(f"{stock_data_dir_prefix}_{ds}")
+    qlib_data_dir = os.path.expanduser(f"{qlib_data_dir_prefix}_{ds}")
+    instruments_file = f"{qlib_data_dir}/instruments/filter.txt"
+
+    if os.path.exists(stock_data_dir):
+        logger.info(f"data already downloaded. Skip downloading. Delete folder {stock_data_dir} to download again.")
+        return stock_data_dir, qlib_data_dir, instruments_file
+
+    train_start, train_end, valid_start, valid_end, test_start, test_end, pred_start, pred_end = get_dates(ds)
+    os.makedirs(stock_data_dir, exist_ok=True)
+    os.makedirs(qlib_data_dir, exist_ok=True)
+
+    download_csv(stock_data_dir, train_start, pred_end)
+    csv_to_bin(stock_data_dir, qlib_data_dir, instruments_file)
+    clean_up_old_files(ds, stock_data_dir_prefix, qlib_data_dir_prefix)
+
+    return stock_data_dir, qlib_data_dir, instruments_file
+
+
+def download_csv(stock_data_dir, start, end, collector="db"):
+    download_cmd = f"python scripts/data_collector/database_1d/collector.py download_data --source_dir {stock_data_dir} --start {start} --end {end} --interval 1d --region CN --max_workers 16"
+    if collector == "bao":
+        download_cmd = f"python scripts/data_collector/baostock_1d/collector.py download_data --source_dir {stock_data_dir} --start {start} --end {end} --interval 1d --region CN"
+    subprocess.run(download_cmd, shell=True)
+
+
+def csv_to_bin(stock_data_dir, qlib_data_dir, instruments_file):
+    # dump
+    logger.info("dump data into qlib bin format")
+    dump_cmd = f"python scripts/dump_bin.py dump_all --csv_path {stock_data_dir} --qlib_dir {qlib_data_dir} --freq day --exclude_fields date,symbol"
+    subprocess.run(dump_cmd, shell=True)
+    # generate new instrument file
+    logger.info("generate new instrument file")
+    ins_cmd = f"python scripts/dump_bin.py remove_index_instuments --instrments_dir={qlib_data_dir}/instruments --instruments_file={instruments_file}"
+    subprocess.run(ins_cmd, shell=True)
+
+
+def clean_up_old_files(ds, stock_data_dir_prefix, qlib_data_dir_prefix):
+    import shutil
+    for i in range(3, 10):
+        temp_ds = datetime.strptime(ds, "%Y%m%d") - timedelta(days=i)
+        temp_ds = temp_ds.strftime("%Y%m%d")
+        data_dir, qlib_dir = f"{stock_data_dir_prefix}_{temp_ds}", f"{qlib_data_dir_prefix}_{temp_ds}"
+        logger.info(f"removing {data_dir} and {qlib_dir}")
+        shutil.rmtree(data_dir, ignore_errors=True)
+        shutil.rmtree(qlib_dir, ignore_errors=True)
 
 
 def get_dates(ds):
@@ -296,7 +354,8 @@ if __name__ == "__main__":
         logger.info("ds not in trade calendar, task will not be executed.")
         exit(0)
 
-    stock_data_dir, qlib_data_dir, instruments_file = download_bao_data(ds)
+    # stock_data_dir, qlib_data_dir, instruments_file = download_bao_data(ds)
+    stock_data_dir, qlib_data_dir, instruments_file = download_db_data(ds)
 
     mode = "download"
     if len(sys.argv) > 2:

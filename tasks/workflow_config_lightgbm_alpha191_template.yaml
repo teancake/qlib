@@ -1,7 +1,7 @@
 qlib_init:
     provider_uri: "$bao_cn_data"
     region: cn
-market: &market bao_filter
+market: &market filter
 benchmark: &benchmark sh000300
 train_start: &train_start $train_start
 train_end: &train_end $train_end

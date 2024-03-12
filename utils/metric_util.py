@@ -59,5 +59,5 @@ def save_prediction_to_db(data_ext, ds, model_name, stage, pred_name, pred_val_c
         df = df.drop(columns=[label_col_name])
 
     df.to_sql(name=table_name, con=db_util.get_db_engine(), if_exists="append", index=False, method="multi",
-              chunksize=1000)
+              chunksize=5000)
     logger.info("{} results saved to db.".format(stage))

@@ -23,7 +23,7 @@ class BaseCollector(abc.ABC):
 
     DEFAULT_START_DATETIME_1D = pd.Timestamp("2000-01-01")
     DEFAULT_START_DATETIME_1MIN = pd.Timestamp(datetime.datetime.now() - pd.Timedelta(days=5 * 6 - 1)).date()
-    DEFAULT_END_DATETIME_1D = pd.Timestamp(datetime.datetime.now() + pd.Timedelta(days=1)).date()
+    DEFAULT_END_DATETIME_1D = pd.Timestamp(datetime.datetime.now() + pd.Timedelta(days=1))
     DEFAULT_END_DATETIME_1MIN = DEFAULT_END_DATETIME_1D
 
     INTERVAL_1min = "1min"
@@ -185,7 +185,8 @@ class BaseCollector(abc.ABC):
 
     def _collector(self, instrument_list):
         error_symbol = []
-        res = Parallel(n_jobs=self.max_workers)(
+        print(f"max workers {self.max_workers}")
+        res = Parallel(n_jobs=self.max_workers, backend="threading")(
             delayed(self._simple_collector)(_inst) for _inst in tqdm(instrument_list)
         )
         for _symbol, _result in zip(instrument_list, res):

@@ -503,5 +503,18 @@ class DumpDataUpdate(DumpDataBase):
         self.save_instruments(df.reset_index())
 
 
+def remove_index_instuments(instrments_dir, instruments_file):
+    # index sh.000, sz.399
+    import os
+    logger.info("remove indexes from instruments")
+    instrments_dir = os.path.expanduser(instrments_dir)
+    fn = os.path.join(instrments_dir, "all.txt")
+    fn_out = instruments_file
+    with open(fn, "r") as fr, open(fn_out, "w") as fw:
+        for line in fr:
+            if line.split("\t")[0][:5] not in ["SH000", "SZ399"]:
+                fw.write(line)
+    logger.info("done, filtered instrument file is {}".format(fn_out))
+
 if __name__ == "__main__":
-    fire.Fire({"dump_all": DumpDataAll, "dump_fix": DumpDataFix, "dump_update": DumpDataUpdate})
+    fire.Fire({"dump_all": DumpDataAll, "dump_fix": DumpDataFix, "dump_update": DumpDataUpdate, "remove_index_instuments": remove_index_instuments})

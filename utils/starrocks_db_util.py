@@ -17,6 +17,9 @@ def generate_partition_spec(ds:str):
 def get_days_ahead_ds(ds, days):
     return (datetime.strptime(ds, '%Y%m%d') - timedelta(days=days)).strftime("%Y%m%d")
 
+def query_all_stock():
+    table_name = "dwd_stock_individual_info_em_df"
+    return StarrocksDbUtil().run_sql(f"select * from {table_name} where ds in (select max(ds) from {table_name})")
 
 
 class StarrocksDbUtil:

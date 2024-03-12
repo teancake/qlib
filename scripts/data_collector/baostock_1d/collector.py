@@ -25,6 +25,7 @@ import qlib
 from qlib.data import D
 
 CUR_DIR = Path(__file__).resolve().parent
+print(CUR_DIR)
 sys.path.append(str(CUR_DIR.parent.parent))
 
 
@@ -314,7 +315,7 @@ class Run(BaseRun):
         logger.info("remove indexes from instruments")
         instrments_dir = os.path.expanduser(instrments_dir)
         fn = os.path.join(instrments_dir, "all.txt")
-        fn_out = os.path.join(instrments_dir, "bao_filter.txt")
+        fn_out = os.path.join(instrments_dir, "filter.txt")
         with open(fn, "r") as fr, open(fn_out, "w") as fw:
             for line in fr:
                 if line.split("\t")[0][:5] not in ["SH000", "SZ399"]:
