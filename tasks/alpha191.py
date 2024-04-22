@@ -124,7 +124,8 @@ def prepare_wide_args(src_data_dir, instruments_file, benchmark_file):
 
     row_names = high.index
     col_names = high.columns
-
+    logger.info(f"benchmark min date {bm_df.index.min()}, max date {bm_df.index.max()}")
+    logger.info(f"stock min date {open_.index.min()}, max date {open_.index.max()}")
     logger.info(f"open shape {open_.shape}, high shape {high.shape}, close shape {close.shape}, returns shape {returns.shape}")
     logger.info(f"volume shape {volume.shape}, bm_open shape {bm_open.shape}, bm_close shape {bm_close.shape}")
 

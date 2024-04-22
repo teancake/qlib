@@ -33,6 +33,7 @@ import lightgbm as lgb
 from sklearn.metrics import mean_squared_error
 import pickle
 
+from utils.config_util import get_mlflow_tracking_config
 
 
 from utils.metric_util import compute_precision_recall, save_prediction_to_db
@@ -41,6 +42,8 @@ from utils.starrocks_db_util import StarrocksDbUtil
 from tqdm import tqdm
 
 from joblib import Parallel, delayed
+
+PRED_LABEL_NAME = "label_roi_5d"
 
 def record_to_db(ds, model_name, recorder_id):
     recorder = R.get_recorder(recorder_id=recorder_id)
@@ -58,7 +61,7 @@ def record_to_db(ds, model_name, recorder_id):
     label = df["label"].values.flatten()
     compute_precision_recall(label, pred)
 
-    save_prediction_to_db(df, ds=ds, model_name=model_name, stage="validation", pred_name="label_roi_3d",
+    save_prediction_to_db(df, ds=ds, model_name=model_name, stage="validation", pred_name=PRED_LABEL_NAME,
                           pred_val_col_name="score", label_col_name="label", run_id=recorder_id)
 
     online_pred_df = pd.DataFrame(recorder.load_object("online_pred.pkl"))
@@ -70,7 +73,7 @@ def record_to_db(ds, model_name, recorder_id):
     online_pred_df["score"] = online_pred_df["score"] * 100
 
 
-    save_prediction_to_db(online_pred_df, ds=ds, model_name=model_name, stage="prediction", pred_name="label_roi_3d",
+    save_prediction_to_db(online_pred_df, ds=ds, model_name=model_name, stage="prediction", pred_name=PRED_LABEL_NAME,
                           pred_val_col_name="score", label_col_name="label", run_id=recorder_id)
 
 
@@ -142,15 +145,16 @@ def clean_up_old_files(ds, stock_data_dir_prefix, qlib_data_dir_prefix):
 
 def get_dates(ds):
     ds = datetime.strptime(ds, "%Y%m%d")
-    train_start = ds - timedelta(days=365 * 3)
-    train_end = ds - timedelta(days=181)
-    valid_start = ds - timedelta(days=180)
+    train_start = ds - timedelta(days=365 * 2)
+    train_end = ds - timedelta(days=61)
+    valid_start = ds - timedelta(days=60)
     valid_end = ds - timedelta(days=31)
     test_start = ds - timedelta(days=30)
     test_end = ds - timedelta(days=2)
     pred_start = ds - timedelta(days=1)
     pred_end = ds - timedelta(days=-1)
     res = [train_start, train_end, valid_start, valid_end, test_start, test_end, pred_start, pred_end]
+    logger.info(f"train_start {train_start}, train_end {train_end}, valid_start {valid_start}, valid_end {valid_end}, test_start {test_start}, test_end {test_end}, pred_start {pred_start}, pred_end {pred_end}")
     return (elem.strftime("%Y-%m-%d") for elem in res)
 
 
@@ -186,13 +190,31 @@ def generate_exp_name(config):
     dh_name = task["dataset"]["kwargs"]["handler"]["class"].lower()
     return f"qlib_bao_{dh_name}_{model_name}"
 
+def generate_recorder_name(ds):
+    return str(ds)
+
+def get_mlflow_exp_manager():
+    server_address, port, user, password = get_mlflow_tracking_config()
+    import os
+    os.environ["MLFLOW_TRACKING_USERNAME"] = user
+    os.environ["MLFLOW_TRACKING_PASSWORD"] = password
+    exp_manager = {
+        "class": "MLflowExpManager",
+        "module_path": "qlib.workflow.expm",
+        "kwargs": {
+            "uri": f"http://{server_address}:{port}",
+            "default_exp_name": "Experiment",
+        }
+    }
+    return exp_manager
 
 def init_qlib(config):
     provider_uri = config["qlib_init"]["provider_uri"]
-    qlib.init(provider_uri=provider_uri, region=REG_CN)
+    exp_manager = get_mlflow_exp_manager()
+    qlib.init(provider_uri=provider_uri, region=REG_CN, exp_manager=exp_manager)
     logger.info(f"qlib initialised with uri {provider_uri}, region {REG_CN}")
 
-def train_and_predict(config):
+def train_and_predict(config, ds):
     task = config["task"]
     logger.info(f"task configuration {task}")
 
@@ -207,11 +229,12 @@ def train_and_predict(config):
     logger.info(f"model {model}")
 
     exp_name = generate_exp_name(config)
+    recorder_name = generate_recorder_name(ds)
     MODEL_FILE_NAME = "params.pkl"
 
     # start exp
-    with R.start(experiment_name=exp_name):
-        logger.info(f"experiment {exp_name}, rid {R.get_recorder().id}, model file name {MODEL_FILE_NAME}")
+    with R.start(experiment_name=exp_name, recorder_name=recorder_name):
+        logger.info(f"experiment {exp_name}, recorder name {recorder_name}, rid {R.get_recorder().id}, model file name {MODEL_FILE_NAME}")
 
         R.log_params(**flatten_dict(task))
         model.params.update(task["model"]["kwargs"])
@@ -392,4 +415,4 @@ if __name__ == "__main__":
     config["task"]["model"]["kwargs"] = best_params
     logger.info(f"auto tuning finished. model params: {config['task']['model']}")
     logger.info("train model and make predictions")
-    train_and_predict(config)
+    train_and_predict(config, ds)
