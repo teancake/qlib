@@ -31,17 +31,13 @@ import pandas as pd
 import optuna
 import lightgbm as lgb
 from sklearn.metrics import mean_squared_error
-import pickle
 
 from utils.config_util import get_mlflow_tracking_config
-
-
 from utils.metric_util import compute_precision_recall, save_prediction_to_db
 
-from utils.starrocks_db_util import StarrocksDbUtil
-from tqdm import tqdm
 
-from joblib import Parallel, delayed
+from functools import partial
+
 
 PRED_LABEL_NAME = "label_roi_5d"
 
@@ -50,9 +46,9 @@ def record_to_db(ds, model_name, recorder_id):
     pred_df = recorder.load_object("pred.pkl")
     label_df = recorder.load_object("label.pkl")
     df = pred_df.join(label_df, how="inner")
-    df = df.dropna(subset=["score", "LABEL0"])
     df = df.reset_index()
     df.columns = ["日期", "代码", "score", "label"]
+    df = df.dropna(subset=["score", "label"])
     df['代码'] = df['代码'].str.replace('SH|SZ', '', regex=True)
     df["score"] = df["score"] * 100
     df["label"] = df["label"] * 100
@@ -219,11 +215,11 @@ def train_and_predict(config, ds):
     logger.info(f"task configuration {task}")
 
     dataset = init_instance_by_config(task["dataset"])
-    train = dataset.prepare(segments='train', data_key=DataHandlerLP.DK_L)
-    nan_columns = train.columns[train.isnull().all()].tolist()
-    print(f"train {train}")
     logger.info(f"dataset {dataset}")
-    logger.info(f"NOTE: NAN features {nan_columns}, all features {train.columns.tolist()}")
+    # train = dataset.prepare(segments='train', col_set=["feature", "label"], data_key=DataHandlerLP.DK_L)
+    # print(f"train {train}")
+    # nan_columns = train["feature"].columns[train["feature"].isnull().all()].tolist()
+    # logger.info(f"NOTE: NAN features {nan_columns}, all features {train['feature'].columns.tolist()}")
 
     model = init_instance_by_config(task["model"])
     logger.info(f"model {model}")
@@ -237,7 +233,6 @@ def train_and_predict(config, ds):
         logger.info(f"experiment {exp_name}, recorder name {recorder_name}, rid {R.get_recorder().id}, model file name {MODEL_FILE_NAME}")
 
         R.log_params(**flatten_dict(task))
-        model.params.update(task["model"]["kwargs"])
         model.fit(dataset)
         R.save_objects(**{MODEL_FILE_NAME: model})
 
@@ -255,15 +250,14 @@ def train_and_predict(config, ds):
         par.generate()
 
         # load previous results
-        pred_df = recorder.load_object("pred.pkl")
-        report_normal_df = recorder.load_object("portfolio_analysis/report_normal_1day.pkl")
-        positions = recorder.load_object("portfolio_analysis/positions_normal_1day.pkl")
-        analysis_df = recorder.load_object("portfolio_analysis/port_analysis_1day.pkl")
+        # pred_df = recorder.load_object("pred.pkl")
+        # report_normal_df = recorder.load_object("portfolio_analysis/report_normal_1day.pkl")
+        # positions = recorder.load_object("portfolio_analysis/positions_normal_1day.pkl")
+        # analysis_df = recorder.load_object("portfolio_analysis/port_analysis_1day.pkl")
 
         # analysis_position.report_graph(report_normal_df)
 
         logger.info("now making predictions")
-        model = recorder.load_object(MODEL_FILE_NAME)
         df = model.predict(dataset=dataset, segment="pred")
         if isinstance(df, pd.Series):
             df = df.to_frame("score")
@@ -286,16 +280,16 @@ def train_and_predict(config, ds):
 def load_optuna_data(config):
     task = config["task"]
     dataset = init_instance_by_config(task["dataset"])
-    train = dataset.prepare(segments="train", data_key=DataHandlerLP.DK_L)
-    valid = dataset.prepare(segments="valid", data_key=DataHandlerLP.DK_L)
-    feature_names = train.columns.tolist()[:-1]
-    logger.info(f"samples from train dataset {train}")
+    train = dataset.prepare(segments="train", col_set=["feature", "label"], data_key=DataHandlerLP.DK_L)
+    valid = dataset.prepare(segments="valid", col_set=["feature", "label"], data_key=DataHandlerLP.DK_L)
+    feature_names = train["feature"].columns.tolist()
+    logger.info(f"samples from train dataset {train}, train columns {train.columns}")
     # train = train.dropna(subset=["LABEL0"])
     # logger.info(f"train dataset after dropna {train}")
     # valid = valid.dropna(subset=["LABEL0"])
     return train, valid, feature_names
 
-def train_optuna(trial):
+def train_optuna(trial, train, valid, feature_names):
     param = {
         "task": "train",
         "boosting_type": "gbdt",
@@ -303,7 +297,7 @@ def train_optuna(trial):
         # "objective": "huber",
         # "alpha": 5.0,
         "verbosity": -1,
-        "num_threads": trial.suggest_int("num_threads", 20, 20),
+        "num_threads": trial.suggest_int("num_threads", 8, 8),
         "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.5, log=True),
         "max_depth": trial.suggest_int("max_depth", 3, 50),
         "lambda_l1": trial.suggest_float("lambda_l1", 1e-4, 100.0, log=True),
@@ -318,8 +312,8 @@ def train_optuna(trial):
         "num_iterations": trial.suggest_int("num_iterations", 100, 200)
     }
 
-    dtrain = lgb.Dataset(train[feature_names], label=train["LABEL0"], feature_name=feature_names)
-    dvalid = lgb.Dataset(valid[feature_names], label=valid["LABEL0"], feature_name=feature_names)
+    dtrain = lgb.Dataset(train["feature"], label=train["label"], feature_name=feature_names)
+    dvalid = lgb.Dataset(valid["feature"], label=valid["label"], feature_name=feature_names)
 
     pruning_callback = optuna.integration.LightGBMPruningCallback(trial, "l2", valid_name="valid")
 
@@ -328,16 +322,17 @@ def train_optuna(trial):
     evals_result_callback = lgb.record_evaluation(evals_result)
 
     lgbm = lgb.train(param, dtrain, valid_sets=[dtrain, dvalid], valid_names=["train", "valid"], callbacks=[pruning_callback, verbose_eval_callback, evals_result_callback])
-    mse = mean_squared_error(valid["LABEL0"], lgbm.predict(valid[feature_names]))
+    mse = mean_squared_error(valid["label"], lgbm.predict(valid["feature"]))
     print(f"mse is {mse}")
     return mse
 
 
-def auto_tune():
-    study = optuna.create_study(
-        pruner=optuna.pruners.MedianPruner(n_warmup_steps=10), direction="minimize"
-    )
-    study.optimize(train_optuna, n_trials=30)
+def auto_tune(config):
+    logger.info("load auto tune data")
+    train, valid, feature_names = load_optuna_data(config)
+    logger.info("start auto tuning")
+    study = optuna.create_study(pruner=optuna.pruners.MedianPruner(n_warmup_steps=10), direction="minimize")
+    study.optimize(partial(train_optuna, train=train, valid=valid, feature_names=feature_names), n_trials=30)
 
     print("Number of finished trials: {}".format(len(study.trials)))
     print("Best trial:")
@@ -349,16 +344,19 @@ def auto_tune():
 
     return trial.params
 
-
-def customised_train():
-    dtrain = lgb.Dataset(train[feature_names], label=train["LABEL0"], feature_name=feature_names)
-    dvalid = lgb.Dataset(valid[feature_names], label=valid["LABEL0"], feature_name=feature_names)
-    evals_result = {}
-    verbose_eval_callback = lgb.log_evaluation(period=20)
-    evals_result_callback = lgb.record_evaluation(evals_result)
-    lgbm = lgb.train(best_params, dtrain, valid_sets=[dtrain, dvalid], valid_names=["train", "valid"],
-                     callbacks=[verbose_eval_callback, evals_result_callback])
-
+def run(model, factor, enable_auto_tune):
+    template_config_path = f"tasks/workflow_config_{model}_{factor}_template.yaml"
+    user_config_path = f"tasks/workflow_config_{model}_{factor}_{ds}.yaml"
+    logger.info("generate config files")
+    generate_config_file(ds, template_config_path, user_config_path, qlib_data_path=qlib_data_path)
+    config = get_config_from_file(user_config_path)
+    init_qlib(config)
+    if enable_auto_tune:
+        best_params = auto_tune(config)
+        config["task"]["model"]["kwargs"] = best_params
+        logger.info(f"auto tuning finished. model params: {config['task']['model']}")
+    logger.info("train model and make predictions")
+    train_and_predict(config, ds)
 
 
 if __name__ == "__main__":
@@ -380,9 +378,11 @@ if __name__ == "__main__":
     # stock_data_dir, qlib_data_dir, instruments_file = download_bao_data(ds)
     stock_data_dir, qlib_data_dir, instruments_file = download_db_data(ds)
 
-    mode = "download"
-    if len(sys.argv) > 2:
-        mode = sys.argv[2]
+    mode = sys.argv[2] if len(sys.argv) > 2 else "download"
+    model = sys.argv[3] if len(sys.argv) > 3 else "lightgbm"
+    enable_auto_tune = True if model == "lightgbm" else False
+
+    logger.info(f"mode {mode}, model {model}, enable_auto_tune {enable_auto_tune}")
 
     if mode == "download":
         logger.info("download data only.")
@@ -394,25 +394,8 @@ if __name__ == "__main__":
                                    qlib_data_dir=qlib_data_dir,
                                    instruments_file=instruments_file,
                                    benchmark="SH000300")
-        user_config_path = f"tasks/workflow_config_lightgbm_alpha191_{ds}.yaml"
-        template_config_path = "tasks/workflow_config_lightgbm_alpha191_template.yaml"
         qlib_data_path = alpha191_qlib_dir
     else:
-        user_config_path = f"tasks/workflow_config_lightgbm_alpha158_{ds}.yaml"
-        template_config_path = "tasks/workflow_config_lightgbm_alpha158_template.yaml"
         qlib_data_path = qlib_data_dir
 
-    logger.info("generate config files")
-    generate_config_file(ds, template_config_path, user_config_path, qlib_data_path=qlib_data_path)
-    config = get_config_from_file(user_config_path)
-
-    init_qlib(config)
-
-    logger.info("load auto tune data")
-    train, valid, feature_names = load_optuna_data(config)
-    logger.info("start auto tuning")
-    best_params = auto_tune()
-    config["task"]["model"]["kwargs"] = best_params
-    logger.info(f"auto tuning finished. model params: {config['task']['model']}")
-    logger.info("train model and make predictions")
-    train_and_predict(config, ds)
+    run(model=model, factor=mode, enable_auto_tune=enable_auto_tune)
